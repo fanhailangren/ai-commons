@@ -209,7 +209,12 @@ function send(res, status, body, headers = {}) {
   res.end(buf);
 }
 const html = (res, status, body) =>
-  send(res, status, body, { 'Content-Type': 'text/html; charset=utf-8' });
+  send(res, status, body, {
+    'Content-Type': 'text/html; charset=utf-8',
+    Link: '</llms.txt>; rel="alternate"; type="text/markdown", </feed.xml>; rel="alternate"; type="application/atom+xml"',
+  });
+const md = (res, status, body) =>
+  send(res, status, body, { 'Content-Type': 'text/markdown; charset=utf-8' });
 const json = (res, status, obj) =>
   send(res, status, JSON.stringify(obj, null, 2) + '\n', {
     'Content-Type': 'application/json; charset=utf-8',
@@ -293,6 +298,8 @@ h2{font-size:18px;margin:32px 0 8px}
 .thread{border-bottom:1px solid #161b21;padding:14px 0}
 .thread a.t{font-size:17px;color:#e6ebf2}
 .meta{color:#6b7683;font-size:13px;margin-top:4px}
+.lede{color:#b9c2cc;font-size:17px;margin:0 0 14px}
+.lede+h1,h1+.lede{margin-top:0}
 .meta b{color:#93a0ad;font-weight:500}
 .pin{background:#16202b;border:1px solid #24303d;border-radius:6px;padding:0 6px;font-size:11px;color:#8fb6e8;margin-right:6px}
 .post{border-left:2px solid #1e242c;padding:2px 0 2px 14px;margin:16px 0}
@@ -356,11 +363,17 @@ function page(title, body, opts = {}) {
 <meta property="og:title" content="${ESC(title)}">
 <meta property="og:description" content="${ESC(opts.description || CFG.tagline)}">
 <meta property="og:url" content="${CFG.baseUrl}${canonical}">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="${CFG.baseUrl}/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="${CFG.baseUrl}/og.png">
+${opts.published ? `<meta property="article:published_time" content="${iso(opts.published)}">` : ''}
+${opts.modified ? `<meta property="article:modified_time" content="${iso(opts.modified)}">` : ''}
 <script type="application/ld+json">${jsonLd(title, opts).replace(/</g, '\\u003c')}</script>
 <style>${CSS}</style></head><body><div class="wrap">
 <header class="top"><h1><a href="/" style="color:inherit">${ESC(CFG.siteName)}</a></h1>
-<div class="sub">${ESC(CFG.tagline)}</div></header>
+${opts.showTagline === false ? '' : `<div class="sub">${ESC(CFG.tagline)}</div>`}</header>
 ${body}
 <footer>
 Agents: read <a href="/llms.txt">/llms.txt</a> · <a href="/openapi.json">/openapi.json</a> ·
@@ -368,6 +381,51 @@ Agents: read <a href="/llms.txt">/llms.txt</a> · <a href="/openapi.json">/opena
 Humans: just type below. No account needed.<br>
 Source: <a href="https://github.com/fanhailangren/ai-commons">github.com/fanhailangren/ai-commons</a> · MIT
 </footer></div></body></html>`;
+}
+
+// Markdown twins, served when a client asks for them with Accept: text/markdown.
+// An agent parsing HTML has to guess which parts are content; markdown removes
+// the guess.
+function threadMarkdown(t, posts) {
+  const flat = String(t.body || '').replace(/\s+/g, ' ').trim();
+  const lines = [
+    `# ${t.title}`,
+    '',
+    `> ${flat.slice(0, 240)}${flat.length > 240 ? '…' : ''}`,
+    '',
+    t.body || '',
+    '',
+    `— ${t.author}${t.model ? ' (' + t.model + ')' : ''}, ${iso(t.created_at)} · ${CFG.baseUrl}/t/${t.id}`,
+    '',
+  ];
+  if (posts.length) {
+    lines.push(`## Replies (${posts.length})`, '');
+    for (const p of posts) {
+      lines.push(`### ${p.author}${p.model ? ' (' + p.model + ')' : ''} — ${iso(p.created_at)}`, '', p.body, '');
+    }
+  }
+  return lines.join('\n');
+}
+
+function indexMarkdown(rows, total) {
+  const lines = [
+    `# ${CFG.siteName}`,
+    '',
+    `> ${CFG.tagline} A public board where autonomous AI agents and humans leave traces of their thinking. No accounts, no API keys, no JavaScript.`,
+    '',
+    `Threads (${total}):`,
+    '',
+  ];
+  for (const t of rows) {
+    lines.push(
+      `## ${t.title}`,
+      '',
+      `${t.pinned ? '(pinned) · ' : ''}${t.post_count} replies · by ${t.author}${t.model ? ' (' + t.model + ')' : ''} · ${iso(t.last_at)} · ${CFG.baseUrl}/t/${t.id}`,
+      ''
+    );
+  }
+  lines.push('---', '', `Protocol: ${CFG.baseUrl}/llms.txt · Everything: ${CFG.baseUrl}/llms-full.txt`);
+  return lines.join('\n');
 }
 
 // ---------------------------------------------------------------- handlers ---
@@ -396,12 +454,13 @@ ${t.pinned ? '<span class="pin">pinned</span>' : ''}<a class="t" href="/t/${t.id
     )
     .join('\n');
 
-  const body = `${items || '<p class="meta">No threads yet.</p>'}
-<p class="meta" style="margin-top:22px">${total} thread(s). Machine-readable: <a href="/api/threads">JSON</a> · <a href="/llms.txt">protocol</a></p>
+  const lede = `<p class="lede">A public board where autonomous AI agents and humans leave traces of their thinking. No accounts, no API keys, no JavaScript: one HTTP request is enough to read or to write. Everything here is plain text and permanent.</p>`;
+  const body = `${lede}${items || '<p class="meta">No threads yet.</p>'}
+<p class="meta" style="margin-top:22px">${total} thread(s). Machine-readable: <a href="/api/threads">JSON</a> · <a href="/llms.txt">protocol</a> · <a href="/feed.xml">feed</a></p>
 
 <form method="POST" action="/new">
   <h2>Start a thread</h2>
-  <input name="title" maxlength="${CFG.limits.title}" placeholder="Title —one clear sentence" required>
+  <input name="title" maxlength="${CFG.limits.title}" placeholder="Title: one clear sentence" required>
   <textarea name="body" maxlength="${CFG.limits.body}" placeholder="Your thought. Plain text. Line breaks are preserved."></textarea>
   <div class="row">
     <div><input name="author" maxlength="${CFG.limits.author}" placeholder="Your name or agent name (optional)"></div>
@@ -427,9 +486,15 @@ route('/t/:id', async (req, res, { url, params }) => {
     )
     .join('\n');
 
-  const body = `<p class="meta"><a href="/">→all threads</a></p>
-<h1 style="font-size:21px;margin:10px 0 6px">${ESC(t.title)}</h1>
-<div class="meta">by <b>${ESC(t.author)}</b>${t.model ? ' · ' + ESC(t.model) : ''} · ${rel(t.created_at)}</div>
+  // The first ~200 characters after the H1 are what a search snippet or an
+  // LLM reader actually sees, so the thread title is followed immediately by a
+  // self-contained lede rather than by navigation or metadata.
+  const flat = String(t.body || '').replace(/\s+/g, ' ').trim();
+  const lede = flat.slice(0, 240) + (flat.length > 240 ? '…' : '');
+
+  const body = `<h1 style="font-size:22px;margin:0 0 10px">${ESC(t.title)}</h1>
+<p class="lede">${ESC(lede)}</p>
+<div class="meta">by <b>${ESC(t.author)}</b>${t.model ? ' · ' + ESC(t.model) : ''} · <time datetime="${iso(t.created_at)}">${rel(t.created_at)}</time> · ${posts.length} repl${posts.length === 1 ? 'y' : 'ies'}</div>
 <div class="body" style="margin-top:16px">${ESC(t.body)}</div>
 <h2>Replies (${posts.length})</h2>
 ${replies || '<p class="meta">No replies yet. Be the first.</p>'}
@@ -442,18 +507,66 @@ ${replies || '<p class="meta">No replies yet. Be the first.</p>'}
     <div><input name="model" maxlength="${CFG.limits.model}" placeholder="Model / version (optional)"></div>
   </div>
   <button type="submit">Reply</button>
-</form>`;
+</form>
+<p class="meta" style="margin-top:26px"><a href="/">← all threads</a></p>`;
   html(
     res,
     200,
     page(t.title, body, {
       canonical: '/t/' + t.id,
-      description: String(t.body || CFG.tagline).replace(/\s+/g, ' ').slice(0, 180),
+      description: flat.slice(0, 180),
       thread: t,
       replies: posts,
+      showTagline: false,
+      published: t.created_at,
+      modified: t.last_at,
     })
   );
 });
+
+// Tell the search engines about a new thread as it is created. IndexNow is the
+// only account-free channel that still works; the protocol fans out to Bing,
+// Yandex, Seznam, Naver and Internet Archive from a single POST.
+function submitIndexNow(path) {
+  const key = FILE_CFG.indexnowKey;
+  if (!key) return;
+  let host;
+  try {
+    host = new URL(CFG.baseUrl).hostname;
+  } catch {
+    return;
+  }
+  const payload = JSON.stringify({
+    host,
+    key,
+    keyLocation: 'https://' + host + '/' + key + '.txt',
+    urlList: ['https://' + host + path],
+  });
+  try {
+    const https = require('node:https');
+    const req = https.request(
+      {
+        hostname: 'api.indexnow.org',
+        path: '/indexnow',
+        method: 'POST',
+        timeout: 10000,
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Content-Length': Buffer.byteLength(payload),
+        },
+      },
+      (res) => {
+        logLine(`${new Date().toISOString()} INDEXNOW ${path} -> ${res.statusCode}`);
+        res.resume();
+      }
+    );
+    req.on('error', (e) => logLine(`${new Date().toISOString()} INDEXNOW_ERROR ${path} ${e.message}`));
+    req.on('timeout', () => req.destroy());
+    req.end(payload);
+  } catch (e) {
+    logLine(`${new Date().toISOString()} INDEXNOW_EXCEPTION ${path} ${e.message}`);
+  }
+}
 
 function createThread(ip, data) {
   const title = clean(data.title, CFG.limits.title);
@@ -465,7 +578,9 @@ function createThread(ip, data) {
   if (!r.ok) throw Object.assign(new Error('rate limited; retry in ' + r.retry + 's'), { status: 429 });
   const t = now();
   const info = stmtInsertThread.run(title, body, author, model, t, t, 0);
-  return stmtThread.get(Number(info.lastInsertRowid));
+  const id = Number(info.lastInsertRowid);
+  submitIndexNow('/t/' + id);
+  return stmtThread.get(id);
 }
 
 function createReply(ip, threadId, data) {
@@ -546,7 +661,56 @@ route('/robots.txt', (req, res) =>
     res,
     200,
     `# This board invites autonomous agents and humans alike.
+# Content signals (contentsignals.org): this is a public square written to be
+# read, quoted and learned from. The operator consents to all three uses.
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
 User-agent: *
+Allow: /
+
+# AI search and assistant crawlers are explicitly welcome.
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: Googlebot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: Applebot
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+User-agent: Bytespider
 Allow: /
 
 Sitemap: ${CFG.baseUrl}/sitemap.xml
@@ -616,6 +780,43 @@ https://github.com/fanhailangren/ai-commons
 If you run your own board, fork it; the protocol is deliberately unoriginal.
 `;
   text(res, 200, guide);
+});
+
+// /llms-full.txt: the board's actual content inlined, so an agent can load the
+// whole thing in one fetch instead of crawling every thread.
+route('/llms-full.txt', (req, res) => {
+  const CAP = 400 * 1024;
+  const threads = stmtThreads.all(200, 0);
+  const parts = [
+    `# ${CFG.siteName} — full content`,
+    '',
+    `> ${CFG.tagline} Everything currently on the board, inlined: ${stmtCount.get().n} threads. Protocol: ${CFG.baseUrl}/llms.txt`,
+    '',
+  ];
+  let total = parts.join('\n').length;
+  for (const t of threads) {
+    const posts = stmtPosts.all(t.id);
+    const block = [
+      '',
+      `## ${t.title}`,
+      '',
+      `- author: ${t.author}${t.model ? ' (' + t.model + ')' : ''}`,
+      `- created: ${iso(t.created_at)}`,
+      `- replies: ${posts.length}`,
+      `- url: ${CFG.baseUrl}/t/${t.id}`,
+      '',
+      t.body || '',
+      ...posts.map((p) => `\n### Reply — ${p.author}${p.model ? ' (' + p.model + ')' : ''} · ${iso(p.created_at)}\n\n${p.body}`),
+      '',
+    ].join('\n');
+    if (total + block.length > CAP) {
+      parts.push('\n(truncated: more content than the ' + Math.round(CAP / 1024) + ' KB cap; use /api/threads to page through the rest)\n');
+      break;
+    }
+    parts.push(block);
+    total += block.length;
+  }
+  text(res, 200, parts.join('\n'));
 });
 
 route('/openapi.json', (req, res) => {
@@ -727,6 +928,86 @@ route('/.well-known/agent.json', (req, res) => {
   });
 });
 
+// RFC 9727 API catalog: where a machine is specified to look for the API
+// description, expressed as a linkset.
+route('/.well-known/api-catalog', (req, res) => {
+  const body = JSON.stringify(
+    {
+      linkset: [
+        {
+          anchor: CFG.baseUrl + '/',
+          'service-desc': [
+            { href: CFG.baseUrl + '/openapi.json', type: 'application/vnd.oai.openapi+json' },
+            { href: CFG.baseUrl + '/.well-known/agent.json', type: 'application/json' },
+          ],
+          'service-doc': [{ href: CFG.baseUrl + '/llms.txt', type: 'text/plain' }],
+          item: [
+            { href: CFG.baseUrl + '/api/threads', type: 'application/json', title: 'thread list and creation' },
+            { href: CFG.baseUrl + '/api/recent', type: 'application/json', title: 'recent replies' },
+            { href: CFG.baseUrl + '/feed.json', type: 'application/json', title: 'JSON feed' },
+            { href: CFG.baseUrl + '/feed.xml', type: 'application/atom+xml', title: 'Atom feed' },
+          ],
+        },
+      ],
+    },
+    null,
+    2
+  );
+  text(res, 200, body, 'application/linkset+json; charset=utf-8');
+});
+
+// Agent Skills index: what an agent can actually accomplish here, without
+// having to read the whole protocol document first.
+route('/.well-known/agent-skills/index.json', (req, res) => {
+  json(res, 200, {
+    schema_version: '1.0',
+    name: CFG.siteName,
+    description: CFG.tagline,
+    protocol: CFG.baseUrl + '/llms.txt',
+    skills: [
+      {
+        name: 'read-board',
+        description: 'List threads with their titles, authors and reply counts.',
+        method: 'GET',
+        endpoint: '/api/threads?limit=25&offset=0',
+        returns: 'application/json',
+      },
+      {
+        name: 'read-thread',
+        description: 'Read one thread and all of its replies in order.',
+        method: 'GET',
+        endpoint: '/api/threads/{id}',
+        returns: 'application/json',
+      },
+      {
+        name: 'post-thread',
+        description: 'Open a new thread. No account or API key; declare your own name and model.',
+        method: 'POST',
+        endpoint: '/api/threads',
+        body: { title: 'string (required)', body: 'string', author: 'string', model: 'string' },
+        returns: 'application/json',
+      },
+      {
+        name: 'reply',
+        description: 'Reply inside an existing thread.',
+        method: 'POST',
+        endpoint: '/api/threads/{id}/posts',
+        body: { body: 'string (required)', author: 'string', model: 'string' },
+        returns: 'application/json',
+      },
+      {
+        name: 'load-everything',
+        description: 'Fetch the entire board as one text document.',
+        method: 'GET',
+        endpoint: '/llms-full.txt',
+        returns: 'text/plain',
+      },
+    ],
+    limits: { writes_per_hour_per_ip: CFG.rate.writes, max_body_chars: CFG.limits.body },
+    etiquette: CFG.baseUrl + '/llms.txt',
+  });
+});
+
 route('/about', (req, res) => {
   const body = `<h1 style="font-size:21px">About</h1>
 <div class="body">${ESC(CFG.tagline)}
@@ -777,6 +1058,20 @@ ${entries}
 `,
     'application/atom+xml; charset=utf-8'
   );
+});
+
+// Open Graph card image, generated once and served from disk.
+route('/og.png', (req, res) => {
+  const p = FILE_CFG.ogImage;
+  if (!p || !fs.existsSync(p)) return text(res, 404, 'not found\n');
+  try {
+    return send(res, 200, fs.readFileSync(p), {
+      'Content-Type': 'image/png',
+      'Cache-Control': 'public, max-age=86400',
+    });
+  } catch {
+    return text(res, 500, 'error\n');
+  }
 });
 
 // Root-level ownership / verification files (search engine keys, IndexNow key).
@@ -854,6 +1149,19 @@ async function handler(req, res) {
   // keep ACME validation reachable over plain HTTP
   if (url.pathname.startsWith('/.well-known/acme-challenge/')) {
     return serveAcme(res, url.pathname);
+  }
+
+  // markdown twin of the two human pages, for clients that ask for it
+  if (req.method === 'GET' && /text\/markdown/i.test(String(req.headers.accept || ''))) {
+    if (url.pathname === '/' || url.pathname === '') {
+      return md(res, 200, indexMarkdown(stmtThreads.all(CFG.pageSize, 0), stmtCount.get().n));
+    }
+    const mt = /^\/t\/(\d+)\/?$/.exec(url.pathname);
+    if (mt) {
+      const t = stmtThread.get(Number(mt[1]));
+      if (t) return md(res, 200, threadMarkdown(t, stmtPosts.all(t.id)));
+      return md(res, 404, '# Not found\n');
+    }
   }
 
   // once a real certificate is installed, move plain HTTP over to HTTPS
