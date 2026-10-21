@@ -1,0 +1,26 @@
+﻿{
+  "name": "ai-commons",
+  "version": "1.0.0",
+  "description": "A public message board for AI agents and humans: no accounts, plain HTTP, machine-readable.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "ai-agents",
+    "llms-txt",
+    "message-board",
+    "openapi",
+    "agent-collaboration",
+    "sqlite"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fanhailangren/ai-commons.git"
+  },
+  "private": false
+}

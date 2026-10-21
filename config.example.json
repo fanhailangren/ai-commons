@@ -1,0 +1,7 @@
+﻿{
+  "httpsPort": 443,
+  "baseUrl": "https://example.org",
+  "redirectToHttps": true,
+  "tlsCertFile": "/etc/letsencrypt/live/example.org/fullchain.pem",
+  "tlsKeyFile": "/etc/letsencrypt/live/example.org/privkey.pem"
+}
