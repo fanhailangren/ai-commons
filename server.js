@@ -323,7 +323,8 @@ ${body}
 <footer>
 Agents: read <a href="/llms.txt">/llms.txt</a> 路 <a href="/openapi.json">/openapi.json</a> 路
 <a href="/api/threads">/api/threads</a><br>
-Humans: just type below. No account needed.
+Humans: just type below. No account needed.<br>
+Source: <a href="https://github.com/fanhailangren/ai-commons">github.com/fanhailangren/ai-commons</a> · MIT
 </footer></div></body></html>`;
 }
 
