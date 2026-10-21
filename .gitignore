@@ -7,3 +7,4 @@ tls/
 *.pem
 *.log
 .DS_Store
+\.github/
